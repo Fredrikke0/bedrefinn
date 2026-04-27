@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bedrefinn Search</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+      }
+
+      .top {
+        position: relative;
+        padding: 8px;
+        border-bottom: 1px solid #ddd;
+      }
+
+      .brand {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 20px;
+        font-weight: 700;
+        color: #222;
+      }
+
+      .search-wrap {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+      }
+
+      .filters {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        justify-content: center;
+        margin-top: 8px;
+        font-size: 13px;
+      }
+
+      .slider-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .slider-value {
+        min-width: 34px;
+        text-align: right;
+      }
+
+      .search-input {
+        width: 420px;
+        max-width: 70vw;
+        padding: 8px;
+        font-size: 14px;
+      }
+
+      .search-btn {
+        padding: 8px 12px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      .status {
+        padding: 4px 8px;
+        font-size: 13px;
+        color: #555;
+      }
+
+      .grid {
+        display: grid;
+        gap: 2px;
+        padding: 2px;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      }
+
+      .card {
+        margin: 0;
+      }
+
+      .card img {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        object-fit: cover;
+        display: block;
+        background: #f2f2f2;
+      }
+
+      .score {
+        margin-top: 2px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">BedreFINN</div>
+      <form id="search-form" class="search-wrap">
+        <input
+          id="query"
+          class="search-input"
+          type="text"
+          placeholder="Search: brown sofa, antique chair..."
+          autocomplete="off"
+        />
+        <button class="search-btn" type="submit">Search</button>
+      </form>
+      <div class="filters">
+        <label>
+          <input id="free-only" type="checkbox" />
+          Free only
+        </label>
+        <label class="slider-wrap" for="min-score">
+          Min score
+          <input id="min-score" type="range" min="0" max="2" step="0.01" value="0" />
+          <span id="min-score-value" class="slider-value">0.00</span>
+        </label>
+      </div>
+    </header>
+
+    <div id="status" class="status">Search for furniture by visual style.</div>
+    <main id="results" class="grid"></main>
+
+    <script>
+      const form = document.getElementById("search-form");
+      const queryInput = document.getElementById("query");
+      const resultsEl = document.getElementById("results");
+      const statusEl = document.getElementById("status");
+      const freeOnlyInput = document.getElementById("free-only");
+      const minScoreInput = document.getElementById("min-score");
+      const minScoreValueEl = document.getElementById("min-score-value");
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+      }
+
+      function renderResults(results) {
+        resultsEl.innerHTML = "";
+        for (const item of results) {
+          const figure = document.createElement("figure");
+          figure.className = "card";
+
+          const link = document.createElement("a");
+          link.className = "card-link";
+          link.href = item.url || "#";
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.title = item.title || "Listing";
+
+          const img = document.createElement("img");
+          const score = document.createElement("div");
+          score.className = "score";
+          score.textContent = `Score: ${(item.similarity ?? 0).toFixed(3)}`;
+          img.src = item.image_src;
+          img.alt = item.title || "Listing image";
+          img.loading = "lazy";
+
+          link.appendChild(img);
+          figure.appendChild(link);
+          figure.appendChild(score);
+          resultsEl.appendChild(figure);
+        }
+      }
+
+      function readFilters() {
+        return {
+          freeOnly: freeOnlyInput.checked,
+          minScore: Number(minScoreInput.value),
+        };
+      }
+
+      function updateMinScoreLabel() {
+        minScoreValueEl.textContent = Number(minScoreInput.value).toFixed(2);
+      }
+
+      async function runSearch(query) {
+        if (!query.trim()) {
+          resultsEl.innerHTML = "";
+          setStatus("Enter a search phrase.");
+          return;
+        }
+
+        const filters = readFilters();
+        setStatus("Searching...");
+        try {
+          const resp = await fetch(
+            `/search/?query=${encodeURIComponent(query)}&limit=1000&free_only=${filters.freeOnly}&min_score=${filters.minScore}`,
+          );
+          if (!resp.ok) throw new Error(`Search failed (${resp.status})`);
+          const data = await resp.json();
+          const results = data.results || [];
+          renderResults(results);
+          setStatus(
+            `Found ${results.length} results for "${query}" (free only: ${filters.freeOnly ? "on" : "off"}, min score: ${filters.minScore.toFixed(2)})`,
+          );
+        } catch (err) {
+          setStatus(`Error: ${err.message}`);
+        }
+      }
+
+      minScoreInput.addEventListener("input", updateMinScoreLabel);
+      updateMinScoreLabel();
+
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        runSearch(queryInput.value);
+      });
+    </script>
+  </body>
+</html>

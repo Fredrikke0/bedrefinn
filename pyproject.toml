@@ -1,0 +1,17 @@
+[project]
+name = "bedrefinn"
+version = "0.1.0"
+description = "Et forsøk på bedre finn søk"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard]>=0.136.1",
+    "numpy>=2.4.4",
+    "pgvector>=0.4.2",
+    "pillow>=12.2.0",
+    "psycopg[binary,pool]>=3.3.3",
+    "python-dotenv>=1.2.2",
+    "requests>=2.33.1",
+    "torch>=2.11.0",
+    "transformers>=5.6.2",
+]

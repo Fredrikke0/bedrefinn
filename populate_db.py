@@ -18,6 +18,7 @@ from tqdm import tqdm
 URL = "https://www.finn.no/map/podium-resource/content/api/search/recommerce/SEARCH_ID_BAP_COMMON"
 ROWS = 200
 SUB_CATEGORY = "1.78.5196"
+AREA_BBOX = "10.4155815206,59.6841435864,11.0874753077,60.1184878011"
 IMAGE_DIR = "images"
 MAX_IMAGES_PER_LISTING = 3
 PHASH_DUPLICATE_THRESHOLD = 8
@@ -287,6 +288,7 @@ def main() -> None:
                 "rows": ROWS,
                 "sub_category": SUB_CATEGORY,
                 "sort": "NEWEST",
+                "bbox": AREA_BBOX,
             }
             if since_ts is not None:
                 # Finn may accept this for server-side filtering; client-side cutoff in any case.

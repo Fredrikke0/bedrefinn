@@ -6,7 +6,7 @@ import math
 from PIL import Image
 from contextlib import nullcontext
 
-model_id = "google/siglip2-so400m-patch16-256"
+model_id = "google/siglip2-base-patch32-256"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model = AutoModel.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)

@@ -3,6 +3,7 @@ from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 import os
+from pathlib import Path
 import numpy as np
 from collections.abc import Sequence
 from embedder import MATCH_THRESHOLD
@@ -70,7 +71,7 @@ def search_by_embedding(
 
 def insert_listing(
     title: str,
-    price: int,
+    price: int | None,
     description: str | None = None,
     url: str | None = None,
     location: str | None = None,
@@ -146,6 +147,25 @@ def insert_listing_images(
                 rows,
             )
     return len(rows)
+
+
+def reset_listings_data() -> None:
+    """Delete all listings and images, resetting identities."""
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE TABLE listing_images, listings RESTART IDENTITY CASCADE")
+
+
+def recreate_schema() -> None:
+    """Drop and recreate tables from schema.sql."""
+    schema_path = Path(__file__).with_name("schema.sql")
+    schema_sql = schema_path.read_text(encoding="utf-8")
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS listing_images CASCADE")
+            cur.execute("DROP TABLE IF EXISTS listings CASCADE")
+            cur.execute(schema_sql)
+
 
 def mark_stale_listings(seen_source_ids: Sequence[str]) -> tuple[int, int]:
     """Flag listings missing from `seen_source_ids` as stale; revive any seen listings.

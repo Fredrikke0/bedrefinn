@@ -104,25 +104,25 @@
           id="query"
           class="search-input"
           type="text"
-          placeholder="Search: brown sofa, antique chair..."
+          placeholder="Søk: brun sofa, antikk stol..."
           autocomplete="off"
         />
-        <button class="search-btn" type="submit">Search</button>
+        <button class="search-btn" type="submit">Søk</button>
       </form>
       <div class="filters">
         <label>
           <input id="free-only" type="checkbox" />
-          Free only
+          Gis bort
         </label>
         <label class="slider-wrap" for="min-score">
-          Min match confidence
+          Prosent match
           <input id="min-score" type="range" min="10" max="99" step="1" value="75" />
           <span id="min-score-value" class="slider-value">75%</span>
         </label>
       </div>
     </header>
 
-    <div id="status" class="status">Search for furniture by visual style.</div>
+    <div id="status" class="status">Søk etter møbler basert på beskrivelse.</div>
     <main id="results" class="grid"></main>
 
     <script>
@@ -180,12 +180,12 @@
       async function runSearch(query) {
         if (!query.trim()) {
           resultsEl.innerHTML = "";
-          setStatus("Enter a search phrase.");
+          setStatus("Skriv inn et søkeuttrykk.");
           return;
         }
 
         const filters = readFilters();
-        setStatus("Searching...");
+        setStatus("Søker...");
         try {
           const resp = await fetch(
             `/search/?query=${encodeURIComponent(query)}&limit=1000&free_only=${filters.freeOnly}&min_match_pct=${filters.minMatchPct}`,
@@ -195,7 +195,7 @@
           const results = data.results || [];
           renderResults(results);
           setStatus(
-            `Found ${results.length} results for "${query}" (free only: ${filters.freeOnly ? "on" : "off"}, min confidence: ${filters.minMatchPct}%)`,
+            `Fant ${results.length} treff for "${query}" (gis bort: ${filters.freeOnly ? "på" : "av"}, prosent match: ${filters.minMatchPct}%)`,
           );
         } catch (err) {
           setStatus(`Error: ${err.message}`);

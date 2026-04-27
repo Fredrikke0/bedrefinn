@@ -11,6 +11,7 @@ from typing import Any
 import db
 import embedder
 import imagehash
+import numpy as np
 import requests
 from PIL import Image
 from tqdm import tqdm
@@ -26,6 +27,8 @@ seen_hashes: set[imagehash.ImageHash] = set()
 seen_hashes_lock = threading.Lock()
 dedup_skipped_count = 0
 dedup_skipped_lock = threading.Lock()
+blank_or_solid_skipped_count = 0
+blank_or_solid_skipped_lock = threading.Lock()
 
 
 class RateLimiter:
@@ -67,6 +70,9 @@ def download_and_enqueue(
             resp = requests.get(image_url, timeout=10)
             resp.raise_for_status()
             img = Image.open(BytesIO(resp.content)).convert("RGB")
+            if is_blank_or_solid_color(img):
+                increment_blank_or_solid_skipped_count()
+                continue
             if is_duplicate(img):
                 increment_dedup_skipped_count()
                 continue
@@ -88,10 +94,31 @@ def is_duplicate(img: Image.Image, threshold: int = PHASH_DUPLICATE_THRESHOLD) -
     return False
 
 
+def is_blank_or_solid_color(img: Image.Image) -> bool:
+    arr = np.array(img.convert("L"))
+    return float(arr.std()) < 8.0
+
+
 def increment_dedup_skipped_count() -> None:
     global dedup_skipped_count
     with dedup_skipped_lock:
         dedup_skipped_count += 1
+
+
+def increment_blank_or_solid_skipped_count() -> None:
+    global blank_or_solid_skipped_count
+    with blank_or_solid_skipped_lock:
+        blank_or_solid_skipped_count += 1
+
+
+def parse_listing_price(item: dict[str, Any]) -> int | None:
+    trade_type = str(item.get("trade_type") or "").strip()
+    raw_price = (item.get("price") or {}).get("amount")
+    if trade_type == "Gis bort":
+        return 0
+    if raw_price in (None, 0):
+        return None
+    return int(raw_price)
 
 
 def cleanup_listing_files(image_dir: str, source_id: str) -> None:
@@ -209,8 +236,8 @@ def main() -> None:
     parser.add_argument(
         "--embed-queue-size",
         type=int,
-        default=32,
-        help="Max PIL images queued for embedding; bounds RAM (default: 32).",
+        default=64,
+        help="Max PIL images queued for embedding; bounds RAM (default: 64).",
     )
     parser.add_argument(
         "--embed-batch-size",
@@ -231,6 +258,11 @@ def main() -> None:
             "encountered in this run."
         ),
     )
+    parser.add_argument(
+        "--clean-run",
+        action="store_true",
+        help="Delete all listings/images in DB and all local files in images/ before ingesting.",
+    )
     args = parser.parse_args()
     if args.embed_batch_size < 1:
         raise SystemExit("--embed-batch-size must be >= 1")
@@ -250,8 +282,13 @@ def main() -> None:
         print(f"Error opening database: {e}")
         raise SystemExit(1) from e
 
+    if args.clean_run:
+        db.recreate_schema()
+        wipe_image_dir(IMAGE_DIR)
+        print("Clean run: recreated DB tables and wiped local image files.")
+
     since_ts: int | None = None
-    if not args.full_scan and not force_redownload_existing:
+    if not args.full_scan and not force_redownload_existing and not args.clean_run:
         since_ts = db.get_max_source_timestamp()
         if since_ts is not None:
             print(f"Incremental mode: Finn doc timestamp > {since_ts} (newest stored in DB).")
@@ -283,16 +320,18 @@ def main() -> None:
     try:
         dl_pool = ThreadPoolExecutor(max_workers=args.download_workers)
         while not stop_paging and not shutdown.is_set():
-            params: dict = {
-                "page": page,
-                "rows": ROWS,
-                "sub_category": SUB_CATEGORY,
-                "sort": "NEWEST",
-                "bbox": AREA_BBOX,
-            }
+            params: list[tuple[str, Any]] = [
+                ("page", page),
+                ("rows", ROWS),
+                ("sub_category", SUB_CATEGORY),
+                ("sort", "NEWEST"),
+                ("bbox", AREA_BBOX),
+                ("trade_type", 1),
+                ("trade_type", 2),
+            ]
             if since_ts is not None:
                 # Finn may accept this for server-side filtering; client-side cutoff in any case.
-                params["timestamp"] = since_ts
+                params.append(("timestamp", since_ts))
 
             r = http_get(finn_rate, URL, params=params, timeout=10)
             if shutdown.is_set():
@@ -340,7 +379,7 @@ def main() -> None:
                 if seen_source_ids is not None:
                     seen_source_ids.add(source_id)
                 title = item.get("heading", "").strip()
-                price = (item.get("price") or {}).get("amount")
+                price = parse_listing_price(item)
                 description = item.get("description")
                 location = item.get("location")
                 url = item.get("canonical_url")
@@ -454,7 +493,13 @@ def main() -> None:
             else:
                 # No listings returned by the API at all.
                 print("Stale check skipped: scan returned 0 listings.")
-        print(f"Perceptual dedup skipped {dedup_skipped_count} image(s).")
+        total_filtered = dedup_skipped_count + blank_or_solid_skipped_count
+        print(
+            "Image filter summary: "
+            f"blank/solid={blank_or_solid_skipped_count}, "
+            f"near-duplicate={dedup_skipped_count}, "
+            f"total={total_filtered}"
+        )
         db.pool.close()
         listings_pbar.close()
         embed_pbar.close()

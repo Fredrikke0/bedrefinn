@@ -10,6 +10,7 @@ from typing import Any
 
 import db
 import embedder
+import imagehash
 import requests
 from PIL import Image
 from tqdm import tqdm
@@ -19,6 +20,11 @@ ROWS = 200
 SUB_CATEGORY = "1.78.5196"
 IMAGE_DIR = "images"
 MAX_IMAGES_PER_LISTING = 3
+PHASH_DUPLICATE_THRESHOLD = 8
+seen_hashes: set[imagehash.ImageHash] = set()
+seen_hashes_lock = threading.Lock()
+dedup_skipped_count = 0
+dedup_skipped_lock = threading.Lock()
 
 
 class RateLimiter:
@@ -60,12 +66,31 @@ def download_and_enqueue(
             resp = requests.get(image_url, timeout=10)
             resp.raise_for_status()
             img = Image.open(BytesIO(resp.content)).convert("RGB")
+            if is_duplicate(img):
+                increment_dedup_skipped_count()
+                continue
             local_path = f"{image_dir}/{source_id}_{idx}.jpg"
             with open(local_path, "wb") as f:
                 f.write(resp.content)
             embed_queue.put((listing_id, image_url, local_path, img))
         except Exception as e:
             print(f"Error downloading image {image_url}: {e}")
+
+
+def is_duplicate(img: Image.Image, threshold: int = PHASH_DUPLICATE_THRESHOLD) -> bool:
+    h = imagehash.phash(img)
+    with seen_hashes_lock:
+        for seen in seen_hashes:
+            if h - seen < threshold:
+                return True
+        seen_hashes.add(h)
+    return False
+
+
+def increment_dedup_skipped_count() -> None:
+    global dedup_skipped_count
+    with dedup_skipped_lock:
+        dedup_skipped_count += 1
 
 
 def cleanup_listing_files(image_dir: str, source_id: str) -> None:
@@ -356,9 +381,7 @@ def main() -> None:
                             )
                             continue
 
-                    expected_image_count = len(image_urls)
-                    existing_image_count = db.count_listing_images_for_listing(existing_listing_id)
-                    if existing_image_count != expected_image_count:
+                    if not db.listing_has_embeddings(existing_listing_id):
                         db.delete_listing_images_for_listing(existing_listing_id)
                         cleanup_listing_files(IMAGE_DIR, source_id)
                         listing_id = existing_listing_id
@@ -429,6 +452,7 @@ def main() -> None:
             else:
                 # No listings returned by the API at all.
                 print("Stale check skipped: scan returned 0 listings.")
+        print(f"Perceptual dedup skipped {dedup_skipped_count} image(s).")
         db.pool.close()
         listings_pbar.close()
         embed_pbar.close()

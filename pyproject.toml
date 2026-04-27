@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi[standard]>=0.136.1",
+    "imagehash>=4.3.2",
     "numpy>=2.4.4",
     "pgvector>=0.4.2",
     "pillow>=12.2.0",

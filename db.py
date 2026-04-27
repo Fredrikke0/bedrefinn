@@ -100,6 +100,16 @@ def count_listing_images_for_listing(listing_id: int) -> int:
             row = cur.fetchone()
             return int(row[0]) if row and row[0] is not None else 0
 
+
+def listing_has_embeddings(listing_id: int) -> bool:
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM listing_images WHERE listing_id = %s AND embedding IS NOT NULL LIMIT 1",
+                (listing_id,),
+            )
+            return cur.fetchone() is not None
+
 def delete_listing_images_for_listing(listing_id: int) -> int:
     with pool.connection() as conn:
         with conn.cursor() as cur:

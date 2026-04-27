@@ -2,6 +2,7 @@ from transformers import AutoModel, AutoProcessor
 import torch
 import torch.nn.functional as F
 import numpy as np
+import math
 from PIL import Image
 from contextlib import nullcontext
 
@@ -21,6 +22,26 @@ if autocast_dtype is not None:
     model = model.to(autocast_dtype)
 model = torch.compile(model, dynamic=True)
 EMBEDDING_DIM = int(model.config.text_config.hidden_size)
+
+with torch.no_grad():
+    _logit_scale = model.logit_scale.exp().item()
+    _logit_bias = model.logit_bias.item()
+
+# Cosine similarity where sigmoid(logit_scale * sim + logit_bias) = 0.5.
+MATCH_THRESHOLD = -_logit_bias / _logit_scale
+
+
+def cosine_to_prob(cosine_sim: float) -> float:
+    """Convert raw cosine similarity to calibrated match probability."""
+    logit = _logit_scale * cosine_sim + _logit_bias
+    return 1.0 / (1.0 + math.exp(-logit))
+
+
+def prob_to_cosine(prob: float) -> float:
+    """Convert target probability (0..1) to a cosine threshold."""
+    clipped_prob = min(max(prob, 1e-6), 1.0 - 1e-6)
+    logit = math.log(clipped_prob / (1.0 - clipped_prob))
+    return (logit - _logit_bias) / _logit_scale
 
 
 def _autocast_context() -> torch.amp.autocast_mode.autocast | nullcontext:

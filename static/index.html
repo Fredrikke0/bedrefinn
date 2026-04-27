@@ -115,9 +115,9 @@
           Free only
         </label>
         <label class="slider-wrap" for="min-score">
-          Min score
-          <input id="min-score" type="range" min="0" max="2" step="0.01" value="0" />
-          <span id="min-score-value" class="slider-value">0.00</span>
+          Min match confidence
+          <input id="min-score" type="range" min="10" max="99" step="1" value="75" />
+          <span id="min-score-value" class="slider-value">75%</span>
         </label>
       </div>
     </header>
@@ -154,7 +154,7 @@
           const img = document.createElement("img");
           const score = document.createElement("div");
           score.className = "score";
-          score.textContent = `Score: ${(item.similarity ?? 0).toFixed(3)}`;
+          score.textContent = `${item.match_pct ?? 0}% match`;
           img.src = item.image_src;
           img.alt = item.title || "Listing image";
           img.loading = "lazy";
@@ -169,12 +169,12 @@
       function readFilters() {
         return {
           freeOnly: freeOnlyInput.checked,
-          minScore: Number(minScoreInput.value),
+          minMatchPct: Number(minScoreInput.value),
         };
       }
 
       function updateMinScoreLabel() {
-        minScoreValueEl.textContent = Number(minScoreInput.value).toFixed(2);
+        minScoreValueEl.textContent = `${Number(minScoreInput.value)}%`;
       }
 
       async function runSearch(query) {
@@ -188,14 +188,14 @@
         setStatus("Searching...");
         try {
           const resp = await fetch(
-            `/search/?query=${encodeURIComponent(query)}&limit=1000&free_only=${filters.freeOnly}&min_score=${filters.minScore}`,
+            `/search/?query=${encodeURIComponent(query)}&limit=1000&free_only=${filters.freeOnly}&min_match_pct=${filters.minMatchPct}`,
           );
           if (!resp.ok) throw new Error(`Search failed (${resp.status})`);
           const data = await resp.json();
           const results = data.results || [];
           renderResults(results);
           setStatus(
-            `Found ${results.length} results for "${query}" (free only: ${filters.freeOnly ? "on" : "off"}, min score: ${filters.minScore.toFixed(2)})`,
+            `Found ${results.length} results for "${query}" (free only: ${filters.freeOnly ? "on" : "off"}, min confidence: ${filters.minMatchPct}%)`,
           );
         } catch (err) {
           setStatus(`Error: ${err.message}`);

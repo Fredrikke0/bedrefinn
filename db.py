@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import os
 import numpy as np
 from collections.abc import Sequence
+from embedder import MATCH_THRESHOLD
 
 load_dotenv()
 
@@ -38,7 +39,7 @@ def search_by_embedding(
     embedding: np.ndarray,
     limit: int = 10,
     free_only: bool = False,
-    min_score: float = 0.0,
+    min_score: float = MATCH_THRESHOLD,
 ):
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:

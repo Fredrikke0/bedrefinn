@@ -27,9 +27,11 @@ def search(
     query: str,
     limit: int = 60,
     free_only: bool = False,
-    min_score: float = 0.0,
+    min_match_pct: float = 75.0,
 ):
     query_emb = embedder.embed_text(f"a photo of a {query}")
+    min_prob = min(max(min_match_pct / 100.0, 0.0), 0.99)
+    min_score = embedder.prob_to_cosine(min_prob)
     results = db.search_by_embedding(
         query_emb,
         limit=limit,
@@ -48,6 +50,9 @@ def search(
                 "image_src": image_src,
                 "url": row.get("url"),
                 "similarity": row.get("similarity"),
+                "match_pct": round(
+                    embedder.cosine_to_prob(float(row.get("similarity") or 0.0)) * 100
+                ),
             }
         )
     return {"results": formatted_results}

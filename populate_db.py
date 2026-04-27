@@ -1,7 +1,7 @@
 import argparse
+import os
 import queue
 import threading
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, wait
 from io import BytesIO
 from pathlib import Path
@@ -10,25 +10,24 @@ from typing import Any
 
 import db
 import embedder
-import imagehash
 import numpy as np
 import requests
 from PIL import Image
 from tqdm import tqdm
 
 URL = "https://www.finn.no/map/podium-resource/content/api/search/recommerce/SEARCH_ID_BAP_COMMON"
-ROWS = 200
+ROWS = 300
 SUB_CATEGORY = "1.78.5196"
 AREA_BBOX = "10.4155815206,59.6841435864,11.0874753077,60.1184878011"
 IMAGE_DIR = "images"
 MAX_IMAGES_PER_LISTING = 2
-PHASH_DUPLICATE_THRESHOLD = 8
-seen_hashes: set[imagehash.ImageHash] = set()
-seen_hashes_lock = threading.Lock()
-dedup_skipped_count = 0
-dedup_skipped_lock = threading.Lock()
+DOWNLOAD_WORKERS = int(os.getenv("DOWNLOAD_WORKERS", "4"))
+REQUEST_INTERVAL = float(os.getenv("REQUEST_INTERVAL", "0.5"))
+EMBED_QUEUE_SIZE = int(os.getenv("EMBED_QUEUE_SIZE", "64"))
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "32"))
 blank_or_solid_skipped_count = 0
 blank_or_solid_skipped_lock = threading.Lock()
+_thread_local = threading.local()
 
 
 class RateLimiter:
@@ -52,7 +51,15 @@ class RateLimiter:
 
 def http_get(rate: RateLimiter, url: str, **kwargs) -> requests.Response:
     rate.wait_turn()
-    return requests.get(url, **kwargs)
+    return get_thread_session().get(url, **kwargs)
+
+
+def get_thread_session() -> requests.Session:
+    session = getattr(_thread_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        _thread_local.session = session
+    return session
 
 
 def download_and_enqueue(
@@ -61,20 +68,19 @@ def download_and_enqueue(
     image_urls: list[str],
     image_dir: str,
     embed_queue: queue.Queue,
+    embed_pbar: tqdm | None,
+    pbar_lock: threading.Lock,
     shutdown: threading.Event,
 ) -> None:
     for idx, image_url in enumerate(image_urls):
         if shutdown.is_set():
             return
         try:
-            resp = requests.get(image_url, timeout=10)
+            resp = get_thread_session().get(image_url, timeout=10)
             resp.raise_for_status()
             img = Image.open(BytesIO(resp.content)).convert("RGB")
             if is_blank_or_solid_color(img):
                 increment_blank_or_solid_skipped_count()
-                continue
-            if is_duplicate(img):
-                increment_dedup_skipped_count()
                 continue
             local_path = f"{image_dir}/{source_id}_{idx}.jpg"
             with open(local_path, "wb") as f:
@@ -82,27 +88,15 @@ def download_and_enqueue(
             embed_queue.put((listing_id, image_url, local_path, img))
         except Exception as e:
             print(f"Error downloading image {image_url}: {e}")
-
-
-def is_duplicate(img: Image.Image, threshold: int = PHASH_DUPLICATE_THRESHOLD) -> bool:
-    h = imagehash.phash(img)
-    with seen_hashes_lock:
-        for seen in seen_hashes:
-            if h - seen < threshold:
-                return True
-        seen_hashes.add(h)
-    return False
+        finally:
+            if embed_pbar is not None:
+                with pbar_lock:
+                    embed_pbar.update(1)
 
 
 def is_blank_or_solid_color(img: Image.Image) -> bool:
     arr = np.array(img.convert("L"))
     return float(arr.std()) < 8.0
-
-
-def increment_dedup_skipped_count() -> None:
-    global dedup_skipped_count
-    with dedup_skipped_lock:
-        dedup_skipped_count += 1
 
 
 def increment_blank_or_solid_skipped_count() -> None:
@@ -122,10 +116,11 @@ def parse_listing_price(item: dict[str, Any]) -> int | None:
 
 
 def cleanup_listing_files(image_dir: str, source_id: str) -> None:
-    pattern = f"{source_id}_*.jpg"
-    for existing_file in Path(image_dir).glob(pattern):
+    image_root = Path(image_dir)
+    for idx in range(MAX_IMAGES_PER_LISTING):
+        existing_file = image_root / f"{source_id}_{idx}.jpg"
         try:
-            existing_file.unlink()
+            existing_file.unlink(missing_ok=True)
         except OSError as e:
             print(f"Error deleting stale image file {existing_file}: {e}")
 
@@ -139,45 +134,8 @@ def wipe_image_dir(image_dir: str) -> None:
             print(f"Error deleting image file {entry}: {e}")
 
 
-def redownload_existing_listing_images(
-    source_id: str,
-    image_urls: list[str],
-    existing_rows: list[dict],
-    image_dir: str,
-    shutdown: threading.Event,
-) -> None:
-    rows_by_url: dict[str, list[dict]] = {}
-    for row in existing_rows:
-        image_url = row.get("image_url")
-        if not image_url:
-            continue
-        rows_by_url.setdefault(image_url, []).append(row)
-
-    for idx, image_url in enumerate(image_urls):
-        if shutdown.is_set():
-            return
-        matching_rows = rows_by_url.get(image_url)
-        if not matching_rows:
-            continue
-        row = matching_rows.pop()
-
-        local_path = f"{image_dir}/{source_id}_{idx}.jpg"
-        try:
-            resp = requests.get(image_url, timeout=10)
-            resp.raise_for_status()
-            Path(local_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(local_path, "wb") as f:
-                f.write(resp.content)
-            if row.get("local_path") != local_path:
-                db.update_listing_image_local_path(row["id"], local_path)
-        except Exception as e:
-            print(f"Error re-downloading image {image_url}: {e}")
-
-
 def embed_worker(
     embed_queue: queue.Queue,
-    pbar: tqdm | None,
-    pbar_lock: threading.Lock,
     batch_size: int,
 ) -> None:
     pending_items: list[tuple[int, str, str, Image.Image]] = []
@@ -198,9 +156,6 @@ def embed_worker(
         except Exception as e:
             print(f"Error embedding image batch ({len(pending_items)} images): {e}")
         finally:
-            if pbar is not None:
-                with pbar_lock:
-                    pbar.update(len(pending_items))
             pending_items.clear()
 
     while True:
@@ -219,44 +174,7 @@ def main() -> None:
         "--max-listings",
         type=int,
         default=None,
-        help="Optional cap for new listings in this run (default: no cap).",
-    )
-    parser.add_argument(
-        "--download-workers",
-        type=int,
-        default=4,
-        help="Parallel download threads (default: 4).",
-    )
-    parser.add_argument(
-        "--request-interval",
-        type=float,
-        default=0.5,
-        help="Minimum seconds between outbound HTTP requests (default: 0.5).",
-    )
-    parser.add_argument(
-        "--embed-queue-size",
-        type=int,
-        default=64,
-        help="Max PIL images queued for embedding; bounds RAM (default: 64).",
-    )
-    parser.add_argument(
-        "--embed-batch-size",
-        type=int,
-        default=32,
-        help="Batch size for image embedding and DB image inserts (default: 32).",
-    )
-    parser.add_argument(
-        "--full-scan",
-        action="store_true",
-        help="Ignore stored timestamps; fetch from newest until --max-listings new rows.",
-    )
-    parser.add_argument(
-        "--wipe-images-and-redownload-from-db",
-        action="store_true",
-        help=(
-            "Delete local files in images/ and force re-download using fresh listing image URLs for existing listings "
-            "encountered in this run."
-        ),
+        help="Optional cap for total listings processed in this run (default: no cap).",
     )
     parser.add_argument(
         "--clean-run",
@@ -264,17 +182,18 @@ def main() -> None:
         help="Delete all listings/images in DB and all local files in images/ before ingesting.",
     )
     args = parser.parse_args()
-    if args.embed_batch_size < 1:
-        raise SystemExit("--embed-batch-size must be >= 1")
+    if DOWNLOAD_WORKERS < 1:
+        raise SystemExit("DOWNLOAD_WORKERS must be >= 1")
+    if REQUEST_INTERVAL < 0:
+        raise SystemExit("REQUEST_INTERVAL must be >= 0")
+    if EMBED_QUEUE_SIZE < 1:
+        raise SystemExit("EMBED_QUEUE_SIZE must be >= 1")
+    if EMBED_BATCH_SIZE < 1:
+        raise SystemExit("EMBED_BATCH_SIZE must be >= 1")
 
     shutdown = threading.Event()
 
     Path(IMAGE_DIR).mkdir(parents=True, exist_ok=True)
-    force_redownload_existing = args.wipe_images_and_redownload_from_db
-    if force_redownload_existing:
-        wipe_image_dir(IMAGE_DIR)
-        print(f"Wiped local image files in {IMAGE_DIR}/")
-
     try:
         db.pool.open()
         db.pool.wait()
@@ -287,184 +206,190 @@ def main() -> None:
         wipe_image_dir(IMAGE_DIR)
         print("Clean run: recreated DB tables and wiped local image files.")
 
-    since_ts: int | None = None
-    if not args.full_scan and not force_redownload_existing and not args.clean_run:
-        since_ts = db.get_max_source_timestamp()
-        if since_ts is not None:
-            print(f"Incremental mode: Finn doc timestamp > {since_ts} (newest stored in DB).")
-
-    finn_rate = RateLimiter(args.request_interval)
-    embed_queue: queue.Queue = queue.Queue(maxsize=args.embed_queue_size)
+    finn_rate = RateLimiter(REQUEST_INTERVAL)
+    embed_queue: queue.Queue = queue.Queue(maxsize=EMBED_QUEUE_SIZE)
     pbar_lock = threading.Lock()
     listings_total = args.max_listings if args.max_listings is not None else None
-    listings_pbar = tqdm(total=listings_total, desc="New listings", position=0)
-    embed_pbar = tqdm(desc="Embedding images", position=1)
+    listings_pbar = tqdm(total=listings_total, desc="Listings", position=0)
+    embed_pbar = tqdm(total=0, desc="Embedding images", position=1)
     embed_thread = threading.Thread(
         target=embed_worker,
-        args=(embed_queue, embed_pbar, pbar_lock, args.embed_batch_size),
+        args=(embed_queue, EMBED_BATCH_SIZE),
         daemon=True,
     )
     embed_thread.start()
 
-    page = 1
     processed = 0
+    new_listings = 0
     stop_paging = False
-    # For --full-scan we track the seen ids and oldest timestamp reached. Because
+    known_result_size: int | None = None
+    newest_pass_source_ids: set[str] = set()
+    sort_passes = ["NEWEST", "PUBLISHED_ASC"]
+    # Track the seen ids and oldest timestamp reached. Because
     # Finn is ordered newest->oldest, unseen DB rows newer than that cutoff can be
     # marked stale.
-    seen_source_ids: set[str] | None = set() if args.full_scan else None
+    seen_source_ids: set[str] | None = set()
     oldest_seen_timestamp: int | None = None
     interrupted = False
 
     dl_pool: ThreadPoolExecutor | None = None
     try:
-        dl_pool = ThreadPoolExecutor(max_workers=args.download_workers)
-        while not stop_paging and not shutdown.is_set():
-            params: list[tuple[str, Any]] = [
-                ("page", page),
-                ("rows", ROWS),
-                ("sub_category", SUB_CATEGORY),
-                ("sort", "NEWEST"),
-                ("bbox", AREA_BBOX),
-                ("trade_type", 1),
-                ("trade_type", 2),
-            ]
-            if since_ts is not None:
-                # Finn may accept this for server-side filtering; client-side cutoff in any case.
-                params.append(("timestamp", since_ts))
-
-            r = http_get(finn_rate, URL, params=params, timeout=10)
-            if shutdown.is_set():
+        dl_pool = ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS)
+        for pass_idx, sort_key in enumerate(sort_passes):
+            if stop_paging or shutdown.is_set():
                 break
-            r.raise_for_status()
-            data = r.json()
-            if page == 1 and args.max_listings is None:
-                finn_match_count = (
-                    (data.get("metadata") or {})
-                    .get("result_size", {})
-                    .get("match_count")
-                )
-                if isinstance(finn_match_count, int) and finn_match_count > 0:
-                    with pbar_lock:
-                        listings_pbar.total = finn_match_count
-                        listings_pbar.refresh()
-            docs = data.get("docs", [])
-            if not docs:
-                break
-
-            page_futures = []
-            reached_old = False
-            for item in docs:
+            pass_seen_first_ids: set[str] = set()
+            reached_middle = False
+            page = 1
+            while page <= 50 and not stop_paging and not shutdown.is_set():
+                params: list[tuple[str, Any]] = [
+                    ("page", page),
+                    ("rows", ROWS),
+                    ("sub_category", SUB_CATEGORY),
+                    ("sort", sort_key),
+                    ("bbox", AREA_BBOX),
+                    ("trade_type", 1),
+                    ("trade_type", 2),
+                ]
+                r = http_get(finn_rate, URL, params=params, timeout=10)
                 if shutdown.is_set():
-                    stop_paging = True
                     break
-                item_ts = item.get("timestamp")
-                if (
-                    oldest_seen_timestamp is None
-                    or (item_ts is not None and item_ts < oldest_seen_timestamp)
-                ):
-                    oldest_seen_timestamp = item_ts
-                if (
-                    since_ts is not None
-                    and item_ts is not None
-                    and item_ts <= since_ts
-                ):
-                    reached_old = True
-                    break
-                if args.max_listings is not None and processed >= args.max_listings:
-                    stop_paging = True
+                r.raise_for_status()
+                data = r.json()
+                finn_match_count = (data.get("metadata") or {}).get("result_size", {}).get("match_count")
+                if isinstance(finn_match_count, int) and finn_match_count > 0:
+                    known_result_size = finn_match_count
+                if page == 1 and pass_idx == 0 and args.max_listings is None and known_result_size is not None:
+                    with pbar_lock:
+                        listings_pbar.total = known_result_size
+                        listings_pbar.refresh()
+
+                docs = data.get("docs", [])
+                if not docs:
                     break
 
-                source_id = str(item.get("ad_id") or item.get("id"))
-                if seen_source_ids is not None:
-                    seen_source_ids.add(source_id)
-                title = item.get("heading", "").strip()
-                price = parse_listing_price(item)
-                description = item.get("description")
-                location = item.get("location")
-                url = item.get("canonical_url")
-                image_urls = item.get("image_urls") or (
-                    [item["image"]["url"]] if item.get("image", {}).get("url") else []
-                )
-                image_urls = image_urls[:MAX_IMAGES_PER_LISTING]
+                first_source_id = str(docs[0].get("ad_id") or docs[0].get("id"))
+                if first_source_id in pass_seen_first_ids:
+                    print(
+                        f"Paging stopped: sort={sort_key} page={page} repeated first listing id."
+                    )
+                    break
+                pass_seen_first_ids.add(first_source_id)
 
-                listing_id = db.insert_listing(
-                    title=title,
-                    price=price,
-                    description=description,
-                    url=url,
-                    location=location,
-                    source_id=source_id,
-                    source_timestamp=item_ts,
-                )
-                should_enqueue_images = False
-                if listing_id is None:
-                    existing_listing_id = db.get_listing_id_by_source_id(source_id)
-                    if existing_listing_id is None:
-                        continue
+                if sort_key == "PUBLISHED_ASC":
+                    current_ids = {str(item.get("ad_id") or item.get("id")) for item in docs}
+                    if current_ids & newest_pass_source_ids:
+                        reached_middle = True
 
-                    if force_redownload_existing:
-                        existing_rows = db.get_listing_images_for_listing(existing_listing_id)
-                        existing_urls = [
-                            row["image_url"] for row in existing_rows if row.get("image_url")
-                        ]
-                        if Counter(existing_urls) == Counter(image_urls):
-                            cleanup_listing_files(IMAGE_DIR, source_id)
-                            page_futures.append(
-                                dl_pool.submit(
-                                    redownload_existing_listing_images,
-                                    source_id,
-                                    image_urls,
-                                    existing_rows,
-                                    IMAGE_DIR,
-                                    shutdown,
-                                )
-                            )
-                            continue
+                page_futures = []
+                download_jobs: list[tuple[int, str, list[str]]] = []
+                for item in docs:
+                    if shutdown.is_set():
+                        stop_paging = True
+                        break
+                    item_ts = item.get("timestamp")
+                    if (
+                        oldest_seen_timestamp is None
+                        or (item_ts is not None and item_ts < oldest_seen_timestamp)
+                    ):
+                        oldest_seen_timestamp = item_ts
+                    if args.max_listings is not None and processed >= args.max_listings:
+                        stop_paging = True
+                        break
 
-                    if not db.listing_has_embeddings(existing_listing_id):
-                        db.delete_listing_images_for_listing(existing_listing_id)
-                        cleanup_listing_files(IMAGE_DIR, source_id)
-                        listing_id = existing_listing_id
-                        should_enqueue_images = True
-                else:
+                    source_id = str(item.get("ad_id") or item.get("id"))
+                    if sort_key == "NEWEST":
+                        newest_pass_source_ids.add(source_id)
+                    if seen_source_ids is not None:
+                        seen_source_ids.add(source_id)
+                    title = item.get("heading", "").strip()
+                    price = parse_listing_price(item)
+                    description = item.get("description")
+                    location = item.get("location")
+                    url = item.get("canonical_url")
+                    image_urls = item.get("image_urls") or (
+                        [item["image"]["url"]] if item.get("image", {}).get("url") else []
+                    )
+                    image_urls = image_urls[:MAX_IMAGES_PER_LISTING]
+
                     processed += 1
-                    should_enqueue_images = True
                     with pbar_lock:
                         listings_pbar.update(1)
-                        listings_pbar.set_postfix_str(f"latest={source_id}", refresh=False)
-
-                if should_enqueue_images:
-                    with pbar_lock:
-                        embed_pbar.total = (embed_pbar.total or 0) + len(image_urls)
-                        embed_pbar.refresh()
-                if image_urls:
-                    if listing_id is not None and should_enqueue_images:
-                        page_futures.append(
-                            dl_pool.submit(
-                                download_and_enqueue,
-                                listing_id,
-                                source_id,
-                                image_urls,
-                                IMAGE_DIR,
-                                embed_queue,
-                                shutdown,
-                            )
+                        listings_pbar.set_postfix_str(
+                            f"sort={sort_key} new={new_listings} latest={source_id}",
+                            refresh=False,
                         )
 
-            if shutdown.is_set():
-                for future in page_futures:
-                    future.cancel()
-            else:
-                wait(page_futures)
+                    listing_state = db.upsert_listing_and_embedding_status(
+                        title=title,
+                        price=price,
+                        description=description,
+                        url=url,
+                        location=location,
+                        source_id=source_id,
+                        source_timestamp=item_ts,
+                    )
+                    if listing_state is None:
+                        continue
+                    listing_id, inserted, has_embeddings = listing_state
+                    should_enqueue_images = False
+                    if not inserted:
+                        if not has_embeddings:
+                            db.delete_listing_images_for_listing(listing_id)
+                            cleanup_listing_files(IMAGE_DIR, source_id)
+                            should_enqueue_images = True
+                    else:
+                        new_listings += 1
+                        should_enqueue_images = True
 
-            if reached_old or stop_paging or (
-                args.max_listings is not None and processed >= args.max_listings
-            ):
-                stop_paging = True
-                break
+                    if should_enqueue_images:
+                        if image_urls and listing_id is not None:
+                            download_jobs.append((listing_id, source_id, image_urls))
 
-            page += 1
+                with pbar_lock:
+                    embed_pbar.n = 0
+                    embed_pbar.total = sum(len(image_urls) for _, _, image_urls in download_jobs)
+                    embed_pbar.refresh()
+
+                for listing_id, source_id, image_urls in download_jobs:
+                    page_futures.append(
+                        dl_pool.submit(
+                            download_and_enqueue,
+                            listing_id,
+                            source_id,
+                            image_urls,
+                            IMAGE_DIR,
+                            embed_queue,
+                            embed_pbar,
+                            pbar_lock,
+                            shutdown,
+                        )
+                    )
+
+                if shutdown.is_set():
+                    for future in page_futures:
+                        future.cancel()
+                else:
+                    wait(page_futures)
+
+                with pbar_lock:
+                    embed_pbar.n = 0
+                    embed_pbar.total = 0
+                    embed_pbar.refresh()
+
+                if stop_paging or (
+                    args.max_listings is not None and processed >= args.max_listings
+                ):
+                    stop_paging = True
+                    break
+
+                if reached_middle:
+                    print(
+                        f"Reverse pass reached overlap with NEWEST at sort={sort_key} page={page}; stopping pass."
+                    )
+                    break
+
+                page += 1
 
     except KeyboardInterrupt:
         interrupted = True
@@ -493,12 +418,11 @@ def main() -> None:
             else:
                 # No listings returned by the API at all.
                 print("Stale check skipped: scan returned 0 listings.")
-        total_filtered = dedup_skipped_count + blank_or_solid_skipped_count
+        print(f"Listings summary: scanned={processed}, new={new_listings}")
         print(
             "Image filter summary: "
             f"blank/solid={blank_or_solid_skipped_count}, "
-            f"near-duplicate={dedup_skipped_count}, "
-            f"total={total_filtered}"
+            f"total={blank_or_solid_skipped_count}"
         )
         db.pool.close()
         listings_pbar.close()

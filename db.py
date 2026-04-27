@@ -24,17 +24,6 @@ def get_all_listings():
             cur.execute("SELECT id, title, price FROM listings ORDER BY created_at DESC")
             return cur.fetchall()
 
-def get_max_source_timestamp() -> int | None:
-    """Latest Finn API doc timestamp (ms) stored in DB, or None if empty / no values."""
-    with pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT MAX(source_timestamp) FROM listings WHERE source_timestamp IS NOT NULL"
-            )
-            row = cur.fetchone()
-            if row is None or row[0] is None:
-                return None
-            return int(row[0])
 
 def search_by_embedding(
     embedding: np.ndarray,
@@ -69,7 +58,7 @@ def search_by_embedding(
             )
             return cur.fetchall()
 
-def insert_listing(
+def upsert_listing_and_embedding_status(
     title: str,
     price: int | None,
     description: str | None = None,
@@ -77,62 +66,62 @@ def insert_listing(
     location: str | None = None,
     source_id: str | None = None,
     source_timestamp: int | None = None,
-)->int:
-    with pool.connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                "INSERT INTO listings (title, price, description, url, location, source_id, source_timestamp) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (source_id) DO NOTHING RETURNING id",
-                (title, price, description, url, location, source_id, source_timestamp),
-            )
-            row = cur.fetchone()
-            return row["id"] if row else None
-
-def get_listing_id_by_source_id(source_id: str) -> int | None:
-    with pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM listings WHERE source_id = %s", (source_id,))
-            row = cur.fetchone()
-            return int(row[0]) if row and row[0] is not None else None
-
-def count_listing_images_for_listing(listing_id: int) -> int:
-    with pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM listing_images WHERE listing_id = %s", (listing_id,))
-            row = cur.fetchone()
-            return int(row[0]) if row and row[0] is not None else 0
-
-
-def listing_has_embeddings(listing_id: int) -> bool:
+) -> tuple[int, bool, bool] | None:
+    """Insert listing if new; always return (listing_id, inserted, has_embeddings)."""
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT 1 FROM listing_images WHERE listing_id = %s AND embedding IS NOT NULL LIMIT 1",
-                (listing_id,),
+                """
+                WITH ins AS (
+                    INSERT INTO listings (
+                        title,
+                        price,
+                        description,
+                        url,
+                        location,
+                        source_id,
+                        source_timestamp
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (source_id) DO NOTHING
+                    RETURNING id
+                )
+                SELECT
+                    l.id,
+                    (ins.id IS NOT NULL) AS inserted,
+                    EXISTS(
+                        SELECT 1
+                        FROM listing_images li
+                        WHERE li.listing_id = l.id
+                          AND li.embedding IS NOT NULL
+                        LIMIT 1
+                    ) AS has_embeddings
+                FROM listings l
+                LEFT JOIN ins ON ins.id = l.id
+                WHERE l.source_id = %s
+                LIMIT 1
+                """,
+                (
+                    title,
+                    price,
+                    description,
+                    url,
+                    location,
+                    source_id,
+                    source_timestamp,
+                    source_id,
+                ),
             )
-            return cur.fetchone() is not None
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return int(row[0]), bool(row[1]), bool(row[2])
 
 def delete_listing_images_for_listing(listing_id: int) -> int:
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM listing_images WHERE listing_id = %s", (listing_id,))
             return cur.rowcount
-
-def get_listing_images_for_listing(listing_id: int) -> list[dict]:
-    with pool.connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                "SELECT id, image_url, local_path FROM listing_images WHERE listing_id = %s ORDER BY id",
-                (listing_id,),
-            )
-            return cur.fetchall()
-
-def update_listing_image_local_path(image_id: int, local_path: str) -> None:
-    with pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE listing_images SET local_path = %s WHERE id = %s",
-                (local_path, image_id),
-            )
 
 def insert_listing_images(
     rows: Sequence[tuple[int, str, str, np.ndarray]],
@@ -149,13 +138,6 @@ def insert_listing_images(
     return len(rows)
 
 
-def reset_listings_data() -> None:
-    """Delete all listings and images, resetting identities."""
-    with pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("TRUNCATE TABLE listing_images, listings RESTART IDENTITY CASCADE")
-
-
 def recreate_schema() -> None:
     """Drop and recreate tables from schema.sql."""
     schema_path = Path(__file__).with_name("schema.sql")
@@ -165,32 +147,6 @@ def recreate_schema() -> None:
             cur.execute("DROP TABLE IF EXISTS listing_images CASCADE")
             cur.execute("DROP TABLE IF EXISTS listings CASCADE")
             cur.execute(schema_sql)
-
-
-def mark_stale_listings(seen_source_ids: Sequence[str]) -> tuple[int, int]:
-    """Flag listings missing from `seen_source_ids` as stale; revive any seen listings.
-
-    Intended to run after a complete scan of the upstream catalog. Performs the
-    update in a single transaction so the DB never exposes a half-applied state.
-
-    Returns (newly_stale_count, revived_count).
-    """
-    seen_list = list(seen_source_ids)
-    with pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE listings SET is_stale = TRUE, updated_at = NOW() "
-                "WHERE is_stale = FALSE AND NOT (source_id = ANY(%s))",
-                (seen_list,),
-            )
-            newly_stale = cur.rowcount or 0
-            cur.execute(
-                "UPDATE listings SET is_stale = FALSE, updated_at = NOW() "
-                "WHERE is_stale = TRUE AND source_id = ANY(%s)",
-                (seen_list,),
-            )
-            revived = cur.rowcount or 0
-    return newly_stale, revived
 
 
 def mark_stale_listings_since_timestamp(

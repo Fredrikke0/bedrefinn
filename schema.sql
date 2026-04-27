@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS listing_images (
     embedding vector(768)
 );
 
+CREATE INDEX IF NOT EXISTS listing_images_listing_id_idx
+ON listing_images (listing_id);
+
 CREATE INDEX IF NOT EXISTS listing_images_embedding_idx
 ON listing_images
 USING hnsw (embedding vector_cosine_ops);

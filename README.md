@@ -1,33 +1,39 @@
 # BedreFINN
 
-## Step 1. Create Postgres database
+Requires mise, uv, and a running Podman or Docker engine. On macOS:
 
-```
-docker run -d --name bedrefinn-db \
-  -e POSTGRES_PASSWORD=dev \
-  -e POSTGRES_DB=bedrefinn \
-  -p 5432:5432 \
-  pgvector/pgvector:pg18-trixie
+```sh
+brew install mise uv podman
 ```
 
-## Step 2. Apply schema
+Start Podman with `podman machine start` (`podman machine init` once for a new
+machine), or start Docker Desktop.
 
-```
-PGPASSWORD=dev psql -h localhost -U postgres -d bedrefinn -f schema.sql
-```
+## Run
 
-## Step 3. Scrape
+From the project directory:
 
-```
-uv run python populate_db.py
-```
-
-## Step 4. Start api and frontend
-
-```
-uv run uvicorn main:app --reload --port 8001
-uv run fastapi dev
+```sh
+mise trust
+mise setup
+mise run:download
+mise run:site
 ```
 
-Access frontend at http://127.0.0.1:8001
+Open http://127.0.0.1:8001. Setup preserves existing data.
+
+## Model
+
+Default: `google/siglip2-base-patch16-256`. For a faster, weaker model:
+
+```sh
+export BEDREFIN_MODEL_ID=google/siglip2-base-patch32-256
+mise run:download --reembed-only
+mise run:site
+```
+
+Stop ingestion and the site before switching models. Re-embedding preserves
+listings and downloaded images. Use the same model in every terminal; finish
+re-embedding before starting the site. `--clean-run` deletes all existing data
+and local images.
 

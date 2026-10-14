@@ -21,12 +21,8 @@ CREATE TABLE IF NOT EXISTS listing_images (
     listing_id INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
     image_url TEXT NOT NULL,
     local_path TEXT,
-    embedding vector(768)
+    embedding vector
 );
 
 CREATE INDEX IF NOT EXISTS listing_images_listing_id_idx
 ON listing_images (listing_id);
-
-CREATE INDEX IF NOT EXISTS listing_images_embedding_idx
-ON listing_images
-USING hnsw (embedding vector_cosine_ops);

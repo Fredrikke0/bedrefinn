@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import numpy as np
 from collections.abc import Sequence
+from psycopg import Connection
 from embedder import MATCH_THRESHOLD
 
 load_dotenv()
@@ -86,9 +87,12 @@ def upsert_listing_and_embedding_status(
                     ON CONFLICT (source_id) DO NOTHING
                     RETURNING id
                 )
+                SELECT id, TRUE AS inserted, FALSE AS has_embeddings
+                FROM ins
+                UNION ALL
                 SELECT
                     l.id,
-                    (ins.id IS NOT NULL) AS inserted,
+                    FALSE AS inserted,
                     EXISTS(
                         SELECT 1
                         FROM listing_images li
@@ -97,8 +101,8 @@ def upsert_listing_and_embedding_status(
                         LIMIT 1
                     ) AS has_embeddings
                 FROM listings l
-                LEFT JOIN ins ON ins.id = l.id
                 WHERE l.source_id = %s
+                  AND NOT EXISTS (SELECT 1 FROM ins)
                 LIMIT 1
                 """,
                 (
@@ -136,6 +140,23 @@ def insert_listing_images(
                 rows,
             )
     return len(rows)
+
+
+def get_images_for_reembedding(conn: Connection) -> list[tuple[int, str | None]]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, local_path FROM listing_images ORDER BY id")
+        return cur.fetchall()
+
+
+def update_image_embeddings(
+    conn: Connection,
+    rows: Sequence[tuple[np.ndarray, int]],
+) -> int:
+    with conn.cursor() as cur:
+        cur.executemany(
+            "UPDATE listing_images SET embedding = %s WHERE id = %s", rows
+        )
+        return cur.rowcount
 
 
 def recreate_schema() -> None:

@@ -1,0 +1,54 @@
+[env]
+DATABASE_URL = "{{ get_env(name='DATABASE_URL', default='postgresql://postgres:dev@localhost:5432/bedrefinn') }}"
+
+[tasks.setup]
+description = "Install dependencies, start Postgres, and apply the schema without deleting data"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+uv sync
+
+if command -v podman >/dev/null 2>&1; then
+    container_runtime=podman
+elif command -v docker >/dev/null 2>&1; then
+    container_runtime=docker
+else
+    printf '%s\n' 'Install Podman or Docker and start its engine first.' >&2
+    exit 1
+fi
+
+if "$container_runtime" container inspect bedrefinn-db >/dev/null 2>&1; then
+    "$container_runtime" start bedrefinn-db
+else
+    "$container_runtime" run -d --name bedrefinn-db \
+        -e POSTGRES_PASSWORD=dev \
+        -e POSTGRES_DB=bedrefinn \
+        -p 5432:5432 \
+        pgvector/pgvector:pg18-trixie
+fi
+
+uv run python - <<'PY'
+import os
+from pathlib import Path
+from psycopg_pool import ConnectionPool
+
+with ConnectionPool(os.environ["DATABASE_URL"], min_size=1, max_size=1,
+                    kwargs={"connect_timeout": 5}) as pool:
+    pool.wait(timeout=30)
+    with pool.connection() as conn:
+        conn.execute(Path("schema.sql").read_text(encoding="utf-8"))
+print("Database ready; existing listings and images preserved.")
+PY
+'''
+
+[tasks."run:download"]
+description = "Scrape FINN and embed images; accepts populate_db.py flags"
+raw = true
+raw_args = true
+run = "uv run python populate_db.py"
+
+[tasks."run:site"]
+description = "Serve the API and frontend at http://127.0.0.1:8001"
+raw = true
+raw_args = true
+run = "uv run uvicorn main:app --reload --port 8001"

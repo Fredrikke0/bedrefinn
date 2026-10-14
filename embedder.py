@@ -3,11 +3,20 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import math
+import os
 from PIL import Image
 from contextlib import nullcontext
+from dotenv import load_dotenv
 
-model_id = "google/siglip2-base-patch32-256"
-device = "cuda" if torch.cuda.is_available() else "cpu"
+load_dotenv()
+
+model_id = os.getenv("BEDREFIN_MODEL_ID", "google/siglip2-base-patch16-256")
+if torch.cuda.is_available():
+    device = "cuda"
+elif torch.backends.mps.is_available():
+    device = "mps"
+else:
+    device = "cpu"
 model = AutoModel.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 model.eval()
@@ -20,7 +29,8 @@ if device == "cuda":
         autocast_dtype = torch.float16
 if autocast_dtype is not None:
     model = model.to(autocast_dtype)
-model = torch.compile(model, dynamic=True)
+if device == "cuda":
+    model = torch.compile(model, dynamic=True)
 EMBEDDING_DIM = int(model.config.text_config.hidden_size)
 
 with torch.no_grad():

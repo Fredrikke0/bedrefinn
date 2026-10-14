@@ -139,8 +139,10 @@ def embed_worker(
     batch_size: int,
 ) -> None:
     pending_items: list[tuple[int, str, str, Image.Image]] = []
+    embedded_images = 0
 
     def flush_pending() -> None:
+        nonlocal embedded_images
         if not pending_items:
             return
         try:
@@ -152,7 +154,7 @@ def embed_worker(
                     pending_items, embeddings, strict=True
                 )
             ]
-            db.insert_listing_images(rows)
+            embedded_images += db.insert_listing_images(rows)
         except Exception as e:
             print(f"Error embedding image batch ({len(pending_items)} images): {e}")
         finally:
@@ -167,6 +169,42 @@ def embed_worker(
         if len(pending_items) >= batch_size:
             flush_pending()
 
+    print(f"Embedding summary: stored={embedded_images} image(s)")
+
+
+def reembed_saved_images(batch_size: int) -> None:
+    with db.pool.connection() as conn:
+        saved_images = db.get_images_for_reembedding(conn)
+        if not saved_images:
+            print("No saved image records to re-embed.")
+            return
+        missing_paths = [
+            local_path for _, local_path in saved_images
+            if not local_path or not Path(local_path).is_file()
+        ]
+        if missing_paths:
+            raise FileNotFoundError(
+                f"Cannot re-embed: {len(missing_paths)} image file(s) missing "
+                f"(first: {missing_paths[0]!r}). Existing embeddings are unchanged."
+            )
+        with tqdm(total=len(saved_images), desc="Re-embedding images") as progress:
+            for start in range(0, len(saved_images), batch_size):
+                batch = saved_images[start : start + batch_size]
+                images = []
+                for _, local_path in batch:
+                    with Image.open(local_path) as image:
+                        images.append(image.convert("RGB"))
+                embeddings = embedder.embed_images(images, batch_size=batch_size)
+                rows = [
+                    (embedding, image_id)
+                    for (image_id, _), embedding in zip(batch, embeddings, strict=True)
+                ]
+                updated = db.update_image_embeddings(conn, rows)
+                if updated != len(batch):
+                    raise RuntimeError("Image records changed during re-embedding; rolling back.")
+                progress.update(updated)
+    print(f"Re-embedding complete: stored={len(saved_images)} image(s). Listings and files preserved.")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch Finn recommerce listings and embed images.")
@@ -176,12 +214,20 @@ def main() -> None:
         default=None,
         help="Optional cap for total listings processed in this run (default: no cap).",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--clean-run",
         action="store_true",
         help="Delete all listings/images in DB and all local files in images/ before ingesting.",
     )
+    mode.add_argument(
+        "--reembed-only",
+        action="store_true",
+        help="Replace embeddings from saved image files without scraping or deleting listings/files.",
+    )
     args = parser.parse_args()
+    if args.reembed_only and args.max_listings is not None:
+        parser.error("--max-listings cannot be combined with --reembed-only")
     if DOWNLOAD_WORKERS < 1:
         raise SystemExit("DOWNLOAD_WORKERS must be >= 1")
     if REQUEST_INTERVAL < 0:
@@ -201,6 +247,13 @@ def main() -> None:
         print(f"Error opening database: {e}")
         raise SystemExit(1) from e
 
+    if args.reembed_only:
+        try:
+            reembed_saved_images(EMBED_BATCH_SIZE)
+        finally:
+            db.pool.close()
+        return
+
     if args.clean_run:
         db.recreate_schema()
         wipe_image_dir(IMAGE_DIR)
@@ -211,7 +264,7 @@ def main() -> None:
     pbar_lock = threading.Lock()
     listings_total = args.max_listings if args.max_listings is not None else None
     listings_pbar = tqdm(total=listings_total, desc="Listings", position=0)
-    embed_pbar = tqdm(total=0, desc="Embedding images", position=1)
+    embed_pbar = tqdm(desc="Image downloads", position=1)
     embed_thread = threading.Thread(
         target=embed_worker,
         args=(embed_queue, EMBED_BATCH_SIZE),
@@ -346,11 +399,6 @@ def main() -> None:
                         if image_urls and listing_id is not None:
                             download_jobs.append((listing_id, source_id, image_urls))
 
-                with pbar_lock:
-                    embed_pbar.n = 0
-                    embed_pbar.total = sum(len(image_urls) for _, _, image_urls in download_jobs)
-                    embed_pbar.refresh()
-
                 for listing_id, source_id, image_urls in download_jobs:
                     page_futures.append(
                         dl_pool.submit(
@@ -371,11 +419,6 @@ def main() -> None:
                         future.cancel()
                 else:
                     wait(page_futures)
-
-                with pbar_lock:
-                    embed_pbar.n = 0
-                    embed_pbar.total = 0
-                    embed_pbar.refresh()
 
                 if stop_paging or (
                     args.max_listings is not None and processed >= args.max_listings

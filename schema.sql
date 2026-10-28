@@ -1,5 +1,10 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
+CREATE TABLE IF NOT EXISTS categories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS listings (
     id SERIAL PRIMARY KEY,
     title TEXT NOT NULL,
@@ -15,6 +20,9 @@ CREATE TABLE IF NOT EXISTS listings (
 );
 
 ALTER TABLE listings ADD COLUMN IF NOT EXISTS is_stale BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS category_id TEXT REFERENCES categories(id);
+
+CREATE INDEX IF NOT EXISTS listings_category_id_idx ON listings (category_id);
 
 CREATE TABLE IF NOT EXISTS listing_images (
     id SERIAL PRIMARY KEY,

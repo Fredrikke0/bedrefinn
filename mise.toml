@@ -52,3 +52,15 @@ description = "Serve the API and frontend at http://127.0.0.1:8001"
 raw = true
 raw_args = true
 run = "uv run uvicorn main:app --reload --port 8001"
+
+[tasks."benchmark:create"]
+description = "Copy 1000 listings and their images into an isolated test database"
+raw = true
+raw_args = true
+run = "uv run python benchmark.py create"
+
+[tasks."benchmark:run"]
+description = "Benchmark local image decoding, embedding, and database writes"
+raw = true
+raw_args = true
+run = "uv run python benchmark.py run"

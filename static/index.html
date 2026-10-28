@@ -5,68 +5,189 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Bedrefinn Search</title>
     <style>
+      :root {
+        --accent: #222;
+        --border: #ddd;
+        --muted: #333;
+      }
+
       body {
         margin: 0;
         font-family: Arial, sans-serif;
       }
 
       .top {
-        position: relative;
-        padding: 8px;
-        border-bottom: 1px solid #ddd;
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1fr);
+        align-items: center;
+        gap: 12px 24px;
+        padding: 16px 20px 12px;
+        border-bottom: 1px solid var(--border);
+        background: #fff;
       }
 
       .brand {
-        position: absolute;
-        left: 10px;
-        top: 50%;
-        transform: translateY(-50%);
-        font-size: 20px;
+        font-size: 23px;
         font-weight: 700;
-        color: #222;
+        color: var(--accent);
       }
 
       .search-wrap {
         display: flex;
         gap: 8px;
-        justify-content: center;
+        align-items: center;
+        width: 100%;
+        max-width: 680px;
+      }
+
+      .image-query {
+        position: relative;
+        flex: 0 0 140px;
+        width: 140px;
+        height: 140px;
+      }
+
+      .image-query img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: 4px;
+      }
+
+      .clear-image {
+        position: absolute;
+        top: -6px;
+        right: -6px;
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid #aaa;
+        border-radius: 50%;
+        background: #fff;
+        color: #222;
+        font-size: 20px;
+        cursor: pointer;
       }
 
       .filters {
+        grid-column: 2;
         display: flex;
-        gap: 12px;
+        flex-wrap: wrap;
+        gap: 8px 24px;
         align-items: center;
-        justify-content: center;
-        margin-top: 8px;
         font-size: 13px;
+        color: #000;
       }
 
-      .slider-wrap {
+      .filters label {
         display: inline-flex;
         align-items: center;
         gap: 8px;
+        min-height: 32px;
       }
 
-      .slider-value {
-        min-width: 34px;
-        text-align: right;
+      .filters input {
+        margin: 0;
+      }
+
+      .filters select {
+        min-height: 32px;
+        padding: 4px 8px;
+        border: 1px solid #767676;
+        border-radius: 4px;
+        background: #fff;
+        color: #000;
+        font: inherit;
+      }
+
+      .category-filters {
+        grid-column: 1 / -1;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      .category-filters:not(:empty) {
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+      }
+
+      .category-filter {
+        max-width: 100%;
+        padding: 7px 10px;
+        border: 1px solid #bbb;
+        border-radius: 4px;
+        background: #fff;
+        color: var(--muted);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        overflow-wrap: anywhere;
+      }
+
+      .category-filter[aria-pressed="true"] {
+        border-color: #176447;
+        background: #e7f3ed;
+        color: #124d37;
+        font-weight: 600;
+      }
+
+      .category-filter:hover {
+        background: #f2f2f2;
+      }
+
+      .top :is(input, select, button):focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
       }
 
       .search-input {
-        width: 420px;
-        max-width: 70vw;
-        padding: 8px;
+        flex: 1;
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+        height: 40px;
+        padding: 9px 12px;
+        border: 1px solid #767676;
+        border-radius: 4px;
+        background: #fff;
         font-size: 14px;
       }
 
       .search-btn {
-        padding: 8px 12px;
+        flex-shrink: 0;
+        height: 40px;
+        padding: 8px 20px;
+        border: 1px solid #767676;
+        border-radius: 4px;
+        background: #efefef;
+        color: #000;
         font-size: 14px;
         cursor: pointer;
       }
 
+      .random-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px 10px;
+      }
+
+      .search-summary {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 8px;
+      }
+
       .status {
-        padding: 4px 8px;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        padding: 4px 0;
         font-size: 13px;
         color: #555;
       }
@@ -82,6 +203,20 @@
         margin: 0;
       }
 
+      .image-search {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: none;
+        cursor: pointer;
+      }
+
+      .image-search:focus-visible {
+        outline: 3px solid #222;
+        outline-offset: -3px;
+      }
+
       .card img {
         width: 100%;
         aspect-ratio: 1 / 1;
@@ -91,8 +226,35 @@
       }
 
       .score {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
         margin-top: 2px;
         font-size: 12px;
+      }
+
+      @media (max-width: 760px) {
+        .top {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 12px;
+          padding: 14px 12px 10px;
+        }
+
+        .filters {
+          grid-column: 1;
+          gap: 8px 16px;
+        }
+
+        .category-filters {
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          padding-bottom: 4px;
+        }
+
+        .category-filter {
+          flex-shrink: 0;
+          white-space: nowrap;
+        }
       }
     </style>
   </head>
@@ -104,25 +266,33 @@
           id="query"
           class="search-input"
           type="text"
+          aria-label="S&#248;k"
           placeholder="Søk: brun sofa, antikk stol..."
           autocomplete="off"
         />
         <button class="search-btn" type="submit">Søk</button>
+        <button id="random-search" class="search-btn random-btn" type="button"
+          title="random" aria-label="random">
+          Random
+        </button>
       </form>
       <div class="filters">
         <label>
           <input id="free-only" type="checkbox" />
           Gis bort
         </label>
-        <label class="slider-wrap" for="min-score">
-          Prosent match
-          <input id="min-score" type="range" min="10" max="99" step="1" value="10" />
-          <span id="min-score-value" class="slider-value">10%</span>
-        </label>
       </div>
+      <div id="category-filters" class="category-filters" role="group" aria-label="Kategorier"></div>
     </header>
 
-    <div id="status" class="status">Søk etter møbler basert på beskrivelse.</div>
+    <div class="search-summary">
+      <div id="image-query" class="image-query" hidden>
+        <img id="query-image" alt="Valgt søkebilde" />
+        <button id="clear-image" class="clear-image" type="button"
+          title="Tøm bildesøk" aria-label="Tøm bildesøk">&times;</button>
+      </div>
+      <div id="status" class="status">Søk etter møbler basert på beskrivelse.</div>
+    </div>
     <main id="results" class="grid"></main>
 
     <script>
@@ -131,8 +301,14 @@
       const resultsEl = document.getElementById("results");
       const statusEl = document.getElementById("status");
       const freeOnlyInput = document.getElementById("free-only");
-      const minScoreInput = document.getElementById("min-score");
-      const minScoreValueEl = document.getElementById("min-score-value");
+      const imageQueryEl = document.getElementById("image-query");
+      const queryImageEl = document.getElementById("query-image");
+      const clearImageButton = document.getElementById("clear-image");
+      const randomButton = document.getElementById("random-search");
+      const categoryFiltersEl = document.getElementById("category-filters");
+      let selectedCategoryIds = new Set();
+      let activeSearch = null;
+      let searchController = null;
 
       function setStatus(text) {
         statusEl.textContent = text;
@@ -144,12 +320,19 @@
           const figure = document.createElement("figure");
           figure.className = "card";
 
-          const link = document.createElement("a");
-          link.className = "card-link";
-          link.href = item.url || "#";
-          link.target = "_blank";
-          link.rel = "noopener noreferrer";
-          link.title = item.title || "Listing";
+          const imageButton = document.createElement("button");
+          imageButton.className = "image-search";
+          imageButton.type = "button";
+          imageButton.title = `Finn lignende: ${item.title || "annonse"}`;
+          imageButton.setAttribute("aria-label", imageButton.title);
+          imageButton.addEventListener("click", () => {
+            runSearch({
+              imageId: item.image_id,
+              title: item.title || "annonse",
+              imageSrc: item.image_src,
+              query: queryInput.value.trim(),
+            }, { scrollToTop: true });
+          });
 
           const img = document.createElement("img");
           const score = document.createElement("div");
@@ -159,8 +342,24 @@
           img.alt = item.title || "Listing image";
           img.loading = "lazy";
 
-          link.appendChild(img);
-          figure.appendChild(link);
+          if (item.url) {
+            const listingLink = document.createElement("a");
+            listingLink.href = item.url;
+            listingLink.target = "_blank";
+            listingLink.rel = "noopener noreferrer";
+            listingLink.title = "Se på FINN";
+            listingLink.textContent = item.price == null
+              ? "Pris ikke oppgitt"
+              : `${new Intl.NumberFormat("nb-NO").format(item.price)} kr`;
+            score.appendChild(listingLink);
+          }
+
+          const category = document.createElement("span");
+          category.textContent = item.category_name || "Ukjent kategori";
+          score.appendChild(category);
+
+          imageButton.appendChild(img);
+          figure.appendChild(imageButton);
           figure.appendChild(score);
           resultsEl.appendChild(figure);
         }
@@ -169,46 +368,202 @@
       function readFilters() {
         return {
           freeOnly: freeOnlyInput.checked,
-          minMatchPct: Number(minScoreInput.value),
+          categoryIds: [...selectedCategoryIds],
         };
       }
 
-      function updateMinScoreLabel() {
-        minScoreValueEl.textContent = `${Number(minScoreInput.value)}%`;
+      function updateCategoryButtons() {
+        for (const button of categoryFiltersEl.querySelectorAll("button")) {
+          const categoryId = button.dataset.categoryId;
+          button.setAttribute("aria-pressed", categoryId
+            ? String(selectedCategoryIds.has(categoryId))
+            : String(selectedCategoryIds.size === 0));
+        }
       }
 
-      async function runSearch(query) {
-        if (!query.trim()) {
-          resultsEl.innerHTML = "";
-          setStatus("Skriv inn et søkeuttrykk.");
-          return;
-        }
-
-        const filters = readFilters();
-        setStatus("Søker...");
+      async function loadCategories() {
         try {
-          const resp = await fetch(
-            `/search/?query=${encodeURIComponent(query)}&limit=1000&free_only=${filters.freeOnly}&min_match_pct=${filters.minMatchPct}`,
-          );
-          if (!resp.ok) throw new Error(`Search failed (${resp.status})`);
-          const data = await resp.json();
-          const results = data.results || [];
-          renderResults(results);
-          setStatus(
-            `Fant ${results.length} treff for "${query}" (gis bort: ${filters.freeOnly ? "på" : "av"}, prosent match: ${filters.minMatchPct}%)`,
-          );
+          const response = await fetch("/categories/");
+          if (!response.ok) throw new Error(`Categories failed (${response.status})`);
+          const data = await response.json();
+          categoryFiltersEl.replaceChildren();
+          for (const category of [{ id: "", name: "Alle" }, ...(data.categories || [])]) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "category-filter";
+            button.dataset.categoryId = category.id;
+            button.textContent = category.name;
+            button.addEventListener("click", () => {
+              if (!category.id) selectedCategoryIds.clear();
+              else if (selectedCategoryIds.has(category.id)) selectedCategoryIds.delete(category.id);
+              else selectedCategoryIds.add(category.id);
+              updateCategoryButtons();
+              if (activeSearch) runSearch(activeSearch);
+            });
+            categoryFiltersEl.appendChild(button);
+          }
+          updateCategoryButtons();
         } catch (err) {
           setStatus(`Error: ${err.message}`);
         }
       }
 
-      minScoreInput.addEventListener("input", updateMinScoreLabel);
-      updateMinScoreLabel();
+      async function runRandomSearch() {
+        searchController?.abort();
+        const controller = new AbortController();
+        searchController = controller;
+        activeSearch = { randomSeed: true };
+        queryInput.value = "";
+        imageQueryEl.hidden = true;
+        const filters = readFilters();
+        const params = new URLSearchParams({ free_only: String(filters.freeOnly) });
+        for (const categoryId of filters.categoryIds) params.append("category_id", categoryId);
+        setStatus("Søker...");
+        try {
+          const response = await fetch(`/random-image/?${params}`, { signal: controller.signal });
+          const seed = await response.json();
+          if (controller.signal.aborted) return;
+          if (!response.ok) throw new Error(response.status === 404
+            ? "Ingen bilder med valgte filtre." : seed.detail || `Search failed (${response.status})`);
+          await runSearch({
+            imageId: seed.image_id,
+            title: seed.title || "annonse",
+            imageSrc: seed.image_src,
+            randomSeed: true,
+          });
+        } catch (err) {
+          if (err.name === "AbortError") return;
+          resultsEl.replaceChildren();
+          setStatus(`Error: ${err.message}`);
+        }
+      }
 
+      async function runSearch(search, { addToHistory = true, scrollToTop = false } = {}) {
+        searchController?.abort();
+        imageQueryEl.hidden = search?.imageId == null || !search.imageSrc;
+        if (!imageQueryEl.hidden) {
+          queryImageEl.src = search.imageSrc;
+          queryImageEl.alt = search.title || "Valgt søkebilde";
+        } else {
+          queryImageEl.removeAttribute("src");
+        }
+        if (!search || (search.imageId == null && !search.query?.trim())) {
+          activeSearch = null;
+          queryInput.value = "";
+          if (addToHistory) {
+            const url = new URL(location.href);
+            for (const key of ["query", "image_id", "image_title", "image_src", "random_seed"]) {
+              url.searchParams.delete(key);
+            }
+            if (url.href !== location.href) history.pushState(null, "", url);
+          }
+          resultsEl.innerHTML = "";
+          setStatus("Søk etter møbler basert på beskrivelse.");
+          return;
+        }
+
+        activeSearch = search;
+        queryInput.value = search.query || "";
+        const controller = new AbortController();
+        searchController = controller;
+        const filters = readFilters();
+        const params = new URLSearchParams({
+          limit: "1000",
+          free_only: String(filters.freeOnly),
+        });
+        if (search.imageId != null) params.set("image_id", search.imageId);
+        if (search.query?.trim()) params.set("query", search.query.trim());
+        for (const categoryId of filters.categoryIds) params.append("category_id", categoryId);
+        if (addToHistory) {
+          const url = new URL(location.href);
+          const historyParams = new URLSearchParams(params);
+          historyParams.delete("limit");
+          if (search.imageId != null) {
+            historyParams.set("image_title", search.title);
+            if (search.imageSrc) historyParams.set("image_src", search.imageSrc);
+            if (search.randomSeed) historyParams.set("random_seed", "true");
+          }
+          url.search = historyParams.toString();
+          if (url.href !== location.href) history.pushState(null, "", url);
+        }
+        setStatus("Søker...");
+        try {
+          const resp = await fetch(
+            `/search/?${params}`,
+            { signal: controller.signal },
+          );
+          const data = await resp.json();
+          if (controller.signal.aborted) return;
+          if (!resp.ok) throw new Error(data.detail || `Search failed (${resp.status})`);
+          const results = data.results || [];
+          renderResults(results);
+          const description = search.imageId != null
+            ? `bilder som ligner på "${search.title}"${search.query ? ` med "${search.query}"` : ""}`
+            : `"${search.query}"`;
+          setStatus(
+            `Fant ${results.length} treff for ${description} (gis bort: ${filters.freeOnly ? "på" : "av"})`,
+          );
+          if (search.imageId != null && data.source_url) {
+            const listingLink = document.createElement("a");
+            listingLink.href = data.source_url;
+            listingLink.target = "_blank";
+            listingLink.rel = "noopener noreferrer";
+            listingLink.textContent = search.title;
+            statusEl.replaceChildren(
+              `Fant ${results.length} treff for bilder som ligner på "`,
+              listingLink,
+              `"${search.query ? ` med "${search.query}"` : ""} (gis bort: ${filters.freeOnly ? "på" : "av"})`,
+            );
+          }
+          if (scrollToTop) window.scrollTo({ top: 0, behavior: "instant" });
+        } catch (err) {
+          if (err.name === "AbortError") return;
+          resultsEl.replaceChildren();
+          setStatus(`Error: ${err.message}`);
+        }
+      }
+
+      function restoreSearch() {
+        const params = new URLSearchParams(location.search);
+        selectedCategoryIds = new Set(params.getAll("category_id"));
+        updateCategoryButtons();
+        freeOnlyInput.checked = params.get("free_only") === "true";
+        const imageId = Number(params.get("image_id"));
+        const query = params.get("query");
+        const search = Number.isSafeInteger(imageId) && imageId > 0
+          ? {
+            imageId,
+            title: params.get("image_title") || "annonse",
+            imageSrc: params.get("image_src"),
+            query: query || "",
+            randomSeed: params.get("random_seed") === "true",
+          }
+          : query ? { query } : null;
+        queryInput.value = query || "";
+        runSearch(search, { addToHistory: false });
+      }
+
+      window.addEventListener("popstate", restoreSearch);
+      randomButton.addEventListener("click", runRandomSearch);
+      clearImageButton.addEventListener("click", () => {
+        const query = queryInput.value.trim();
+        runSearch(query ? { query } : null);
+        queryInput.focus();
+      });
+      for (const filter of [freeOnlyInput]) {
+        filter.addEventListener("change", () => {
+          if (activeSearch) runSearch(activeSearch);
+        });
+      }
       form.addEventListener("submit", (e) => {
         e.preventDefault();
-        runSearch(queryInput.value);
+        const query = queryInput.value.trim();
+        runSearch(activeSearch?.imageId != null
+          ? { ...activeSearch, randomSeed: false, query }
+          : query ? { query } : null);
       });
+      restoreSearch();
+      loadCategories();
     </script>
   </body>
 </html>

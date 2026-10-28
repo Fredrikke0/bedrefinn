@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bedrefinn Rendition Study</title>
+  <style>
+    :root { --ink: #202922; --muted: #626c66; --line: #d8dfd9; --green: #176447; --soft: #edf3ef; --red: #a33232; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: #fafcfb; font: 14px "Trebuchet MS", sans-serif; letter-spacing: 0; }
+    header { border-bottom: 1px solid var(--line); background: #fff; }
+    .header-inner, main { max-width: 1320px; margin: auto; padding: 18px 24px; }
+    .brand-row { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 16px; }
+    h1 { margin: 0; font-size: 22px; font-weight: 700; }
+    h1 span { font-size: 15px; font-weight: 400; color: var(--muted); }
+    #dataset, #status { color: var(--muted); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+    form { display: flex; gap: 8px; align-items: center; }
+    input, select, button { font: inherit; color: inherit; }
+    input[type="search"] { width: 100%; min-width: 0; height: 40px; padding: 8px 12px; border: 1px solid #a5b2aa; border-radius: 4px; background: #fff; }
+    button { cursor: pointer; padding: 8px 14px; min-height: 36px; border: 1px solid #a5b2aa; border-radius: 4px; background: #fff; }
+    button:hover { background: var(--soft); border-color: var(--green); }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+    button:disabled { opacity: .5; cursor: default; }
+    .primary { color: #fff; background: var(--green); border-color: var(--green); }
+    .primary:hover { color: var(--green); }
+    .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; margin-top: 12px; }
+    label { display: inline-flex; align-items: center; gap: 7px; }
+    select { min-height: 34px; border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; max-width: 220px; background: #fff; }
+    input[type="checkbox"] { accent-color: var(--green); }
+    .reference { display: none; position: relative; flex: 0 0 44px; height: 44px; }
+    .reference img { width: 44px; height: 44px; object-fit: contain; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; }
+    .reference button { position: absolute; top: -8px; right: -8px; width: 22px; min-height: 22px; padding: 0; border-radius: 50%; line-height: 18px; background: white; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; min-height: 44px; margin-bottom: 14px; }
+    .votes { display: inline-flex; gap: 6px; align-items: center; }
+    #vote-status { min-width: 78px; color: var(--green); font-size: 12px; }
+    .columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    .column { min-width: 0; }
+    .column h2 { position: sticky; top: 0; z-index: 1; background: #fafcfb; padding: 10px 0; margin: 0; border-bottom: 2px solid var(--ink); display: flex; align-items: center; justify-content: space-between; font-size: 19px; min-height: 46px; }
+    .rendition { color: var(--muted); font-size: 13px; font-weight: 400; }
+    .result { display: grid; grid-template-columns: 152px minmax(0, 1fr); gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+    .photo { padding: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; width: 100%; aspect-ratio: 4/3; min-height: 0; background: #eef1ef; }
+    .photo img { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .details { min-width: 0; }
+    .rank { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; margin: 0 0 6px; }
+    .title { display: block; font-size: 15px; font-weight: 700; line-height: 1.35; color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+    .title:hover { text-decoration: underline; }
+    .category { color: var(--muted); margin-top: 8px; font-size: 12px; overflow-wrap: anywhere; }
+    .price { margin-top: 6px; font-weight: 700; }
+    .empty { padding: 36px 0; color: var(--muted); }
+    .error { color: var(--red) !important; }
+    .columns[aria-busy="true"] { opacity: .55; }
+    @media (max-width: 700px) {
+      .header-inner, main { padding: 14px 12px; }
+      h1 { font-size: 19px; } h1 span { display: block; margin-top: 3px; font-size: 13px; }
+      .brand-row { align-items: flex-start; } #dataset { max-width: 130px; text-align: right; }
+      .columns { gap: 12px; } .result { display: block; padding-top: 12px; }
+      .details { margin-top: 9px; } .title { font-size: 14px; }
+      .filters { gap: 10px; } select { max-width: 170px; }
+      .toolbar { align-items: flex-start; } .votes { flex-wrap: wrap; }
+      .votes button { padding: 7px 10px; } #status { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+<header><div class="header-inner">
+  <div class="brand-row"><h1>Bedrefinn <span>Rendition Study</span></h1><div id="dataset">Loading dataset...</div></div>
+  <form id="search-form">
+    <div class="reference" id="reference"><img id="reference-image" alt="Reference image" /><button type="button" id="clear-image" title="Clear image query" aria-label="Clear image query">&times;</button></div>
+    <input id="query" type="search" value="wooden chair" aria-label="Search query" placeholder="Search" />
+    <button class="primary" type="submit">Search</button>
+  </form>
+  <div class="filters">
+    <label>Category <select id="category"><option value="">All categories</option></select></label>
+    <label><input id="free-only" type="checkbox" />Free only</label>
+    <label>Results <select id="limit"><option>10</option><option>20</option></select></label>
+    <label><input id="reveal" type="checkbox" />Reveal renditions</label>
+  </div>
+</div></header>
+<main>
+  <div class="toolbar">
+    <div id="status" role="status" aria-live="polite">Loading...</div>
+    <div class="votes"><button id="vote-a" disabled>Prefer A</button><button id="vote-tie" disabled>Tie</button><button id="vote-b" disabled>Prefer B</button><span id="vote-status" aria-live="polite"></span><button id="export">Export votes</button></div>
+  </div>
+  <div class="columns" id="columns" aria-busy="true">
+    <section class="column"><h2>A <span class="rendition" id="label-a"></span></h2><div id="results-a"></div></section>
+    <section class="column"><h2>B <span class="rendition" id="label-b"></span></h2><div id="results-b"></div></section>
+  </div>
+</main>
+<script>
+  const element = id => document.getElementById(id);
+  const seed = sessionStorage.getItem('rendition-study-seed') || crypto.randomUUID();
+  sessionStorage.setItem('rendition-study-seed', seed);
+  let imageId = null;
+  let current = null;
+  let currentParams = null;
+  let requestNumber = 0;
+  let controller = null;
+  const votes = ['vote-a', 'vote-tie', 'vote-b'];
+
+  async function getJSON(url, options = {}) {
+    const response = await fetch(url, options);
+    const body = await response.json();
+    if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Request failed');
+    return body;
+  }
+
+  function reveal() {
+    const visible = element('reveal').checked;
+    element('label-a').textContent = visible && current ? current.renditions.A : '';
+    element('label-b').textContent = visible && current ? current.renditions.B : '';
+  }
+
+  function render(side, matches) {
+    const container = element('results-' + side.toLowerCase());
+    container.replaceChildren();
+    if (!matches.length) {
+      const message = document.createElement('div'); message.className = 'empty'; message.textContent = 'No results'; container.append(message);
+    }
+    matches.forEach((match, index) => {
+      const row = document.createElement('article'); row.className = 'result';
+      const photo = document.createElement('button'); photo.className = 'photo'; photo.title = 'Find similar images'; photo.setAttribute('aria-label', 'Find images similar to ' + match.title);
+      const image = document.createElement('img'); image.src = match.image_src; image.alt = match.title; image.loading = 'lazy'; photo.append(image);
+      photo.addEventListener('click', () => {
+        imageId = match.id; element('query').value = ''; element('reference-image').src = '/photo/reference/' + imageId;
+        element('reference').style.display = 'block'; search();
+      });
+      const details = document.createElement('div'); details.className = 'details';
+      const rank = document.createElement('div'); rank.className = 'rank'; rank.textContent = String(index + 1).padStart(2, '0') + '  /  ' + match.score.toFixed(3);
+      const title = document.createElement('a'); title.className = 'title'; title.textContent = match.title; title.href = match.url || '#'; title.target = '_blank'; title.rel = 'noopener noreferrer';
+      const category = document.createElement('div'); category.className = 'category'; category.textContent = match.category_name;
+      const price = document.createElement('div'); price.className = 'price'; price.textContent = match.price === 0 ? 'Free' : match.price == null ? '' : new Intl.NumberFormat('nb-NO').format(match.price) + ' kr';
+      details.append(rank, title, category, price); row.append(photo, details); container.append(row);
+    });
+  }
+
+  async function search() {
+    controller?.abort(); controller = new AbortController();
+    const number = ++requestNumber;
+    votes.forEach(id => element(id).disabled = true);
+    element('columns').setAttribute('aria-busy', 'true'); element('status').className = ''; element('status').textContent = 'Searching...'; element('vote-status').textContent = '';
+    element('reveal').checked = false;
+    const params = new URLSearchParams({query: element('query').value.trim(), free_only: element('free-only').checked, limit: element('limit').value, seed});
+    if (imageId !== null) params.set('image_id', imageId);
+    if (element('category').value) params.set('category', element('category').value);
+    try {
+      const result = await getJSON('/search?' + params, {signal: controller.signal});
+      if (number !== requestNumber) return;
+      current = result; currentParams = params;
+      render('A', result.results.A); render('B', result.results.B); reveal();
+      element('status').textContent = result.results.A.length + ' / ' + result.results.B.length + ' results · ' + result.shared + ' shared';
+      votes.forEach(id => element(id).disabled = false);
+    } catch (error) {
+      if (error.name === 'AbortError' || number !== requestNumber) return;
+      current = null; reveal(); element('status').className = 'error'; element('status').textContent = error.message;
+    } finally { if (number === requestNumber) element('columns').setAttribute('aria-busy', 'false'); }
+  }
+
+  async function vote(choice) {
+    if (!current || !currentParams) return;
+    votes.forEach(id => element(id).disabled = true);
+    try {
+      const body = {key: current.key, choice, query: currentParams.get('query'), image_id: imageId, category: currentParams.get('category'), free_only: currentParams.get('free_only') === 'true', revealed: element('reveal').checked};
+      const result = await getJSON('/judgments', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+      element('vote-status').textContent = 'Saved · ' + result.saved;
+    } catch (error) { element('vote-status').textContent = error.message; votes.forEach(id => element(id).disabled = false); }
+  }
+
+  element('search-form').addEventListener('submit', event => { event.preventDefault(); search(); });
+  for (const id of ['category', 'free-only', 'limit']) element(id).addEventListener('change', search);
+  element('reveal').addEventListener('change', reveal);
+  element('clear-image').addEventListener('click', () => { imageId = null; element('reference').style.display = 'none'; if (!element('query').value.trim()) element('query').value = 'wooden chair'; search(); });
+  element('vote-a').addEventListener('click', () => vote('A')); element('vote-b').addEventListener('click', () => vote('B')); element('vote-tie').addEventListener('click', () => vote('tie'));
+  element('export').addEventListener('click', async () => {
+    try { const data = await getJSON('/judgments'); const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'})); const link = document.createElement('a'); link.href = url; link.download = 'rendition-judgments.json'; link.click(); URL.revokeObjectURL(url); }
+    catch (error) { element('vote-status').textContent = error.message; }
+  });
+  getJSON('/metadata').then(metadata => {
+    element('dataset').textContent = metadata.listings.toLocaleString() + ' listings · ' + metadata.model_id.split('/').pop();
+    for (const category of metadata.categories) { const option = document.createElement('option'); option.value = category.id || ''; option.textContent = category.name; element('category').append(option); }
+    search();
+  }).catch(error => { element('status').textContent = error.message; element('status').className = 'error'; });
+</script>
+</body>
+</html>
